@@ -3,143 +3,126 @@
 
 # LAB 9: CNF Conversion & Resolution-Based Inference
 
-**Concept:** Convert rules to CNF clauses, then apply resolution to prove/disprove a query.
-
-**Key idea:**
-- Implication A→B becomes clause {¬A, B}
-- To prove Q: add ¬Q to KB, if resolution derives empty clause → Q is TRUE
-
-
-## Helper: CNF Conversion & Resolution Engine
-
+**How it works:**
+1. Rule `A AND B -> C` becomes CNF clause `[NOT_A, NOT_B, C]`
+2. Each known fact is its own clause e.g. `[MultipleFailedLogins]`
+3. To prove query Q: add `[NOT_Q]` to KB
+4. Keep resolving pairs: cancel opposites (A vs NOT_A), merge the rest
+5. Empty clause `[]` appears -> contradiction -> Q is TRUE
+6. No new clauses can be made -> Q is FALSE
 
 ```python
-def implication_to_cnf(conditions, conclusion):
-    """A∧B→C  becomes  {¬A, ¬B, C}"""
-    negated = ['¬' + c if not c.startswith('¬') else c[1:] for c in conditions]
-    return frozenset(negated + [conclusion])
+# Rule to CNF: A AND B -> C  becomes  [NOT_A, NOT_B, C]
+def rule_to_cnf(conditions, conclusion):
+    clause = ['NOT_' + c for c in conditions]
+    clause.append(conclusion)
+    return clause
 
+# Flip a literal: NOT_A -> A  and  A -> NOT_A
+def negate(lit):
+    if lit.startswith('NOT_'):
+        return lit[4:]
+    return 'NOT_' + lit
+
+# Try to resolve two clauses
+# If c1 has A and c2 has NOT_A -> cancel them, merge the rest
 def resolve(c1, c2):
-    """Try to resolve two clauses. Returns new clause or None."""
     for lit in c1:
-        neg = lit[1:] if lit.startswith('¬') else '¬' + lit
-        if neg in c2:
-            new_clause = (c1 - {lit}) | (c2 - {neg})
-            return frozenset(new_clause)
+        if negate(lit) in c2:
+            new = [x for x in c1 if x != lit] + [x for x in c2 if x != negate(lit)]
+            return list(dict.fromkeys(new))  # remove duplicates
     return None
 
-def resolution(clauses, query):
-    """Add ¬query, apply resolution. Empty clause = query is TRUE."""
-    neg_query = frozenset(['¬' + query if not query.startswith('¬') else query[1:]])
-    all_clauses = set(clauses) | {neg_query}
+# Full resolution engine
+def check(clauses, query):
+    all_clauses = clauses + [['NOT_' + query]]
 
-    print("CNF Clauses:")
+    print('CNF Clauses:')
     for i, c in enumerate(all_clauses):
-        print(f"  {i+1}. {' ∨ '.join(c)}")
+        print(f'  {i+1}. {" OR ".join(c)}')
 
-    print("\nResolution Steps:")
-    clause_list = list(all_clauses)
+    print('\nResolution Steps:')
     while True:
-        new_clauses = set()
-        for i in range(len(clause_list)):
-            for j in range(i+1, len(clause_list)):
-                resolvent = resolve(clause_list[i], clause_list[j])
-                if resolvent is not None:
-                    if len(resolvent) == 0:
-                        print("  → Empty clause derived!")
+        new_clauses = []
+        n = len(all_clauses)
+        for i in range(n):
+            for j in range(i+1, n):
+                result = resolve(all_clauses[i], all_clauses[j])
+                if result is not None:
+                    if result == []:
+                        print('  -> Empty clause! Query is TRUE.')
                         return True
-                    if resolvent not in all_clauses:
-                        print(f"  Derived: {' ∨ '.join(resolvent) if resolvent else '∅'}")
-                        new_clauses.add(resolvent)
+                    if result not in all_clauses and result not in new_clauses:
+                        print(f'  Derived: {" OR ".join(result)}')
+                        new_clauses.append(result)
         if not new_clauses:
-            return False  # no new clauses = can't prove
-        all_clauses |= new_clauses
-        clause_list = list(all_clauses)
-
+            return False
+        all_clauses += new_clauses
 ```
 
 ## Q1: Cybersecurity Intrusion Detection
 
 **Rules:**
-1. MultipleFailedLogins ∧ LoginFromUnknownIP → SuspiciousLogin
-2. SuspiciousLogin ∧ AdminPrivileges → HighRiskIntrusion
-3. HighRiskIntrusion → IntrusionDetected
-4. AccessToSensitiveFiles ∧ ¬AdminPrivileges → IntrusionDetected
-
+1. MultipleFailedLogins AND LoginFromUnknownIP -> SuspiciousLogin
+2. SuspiciousLogin AND AdminPrivileges -> HighRiskIntrusion
+3. HighRiskIntrusion -> IntrusionDetected
 
 ```python
-# Build CNF clauses from rules
-cyber_clauses = [
-    implication_to_cnf(['MultipleFailedLogins', 'LoginFromUnknownIP'], 'SuspiciousLogin'),
-    implication_to_cnf(['SuspiciousLogin', 'AdminPrivileges'], 'HighRiskIntrusion'),
-    implication_to_cnf(['HighRiskIntrusion'], 'IntrusionDetected'),
+cyber_rules = [
+    rule_to_cnf(['MultipleFailedLogins', 'LoginFromUnknownIP'], 'SuspiciousLogin'),
+    rule_to_cnf(['SuspiciousLogin', 'AdminPrivileges'],          'HighRiskIntrusion'),
+    rule_to_cnf(['HighRiskIntrusion'],                           'IntrusionDetected'),
 ]
 
-# Scenario 1: Low Risk - only MultipleFailedLogins
-print("=== Scenario 1: Low Risk ===")
-facts1 = [frozenset(['MultipleFailedLogins'])]
-result = resolution(cyber_clauses + facts1, 'IntrusionDetected')
-print(f"IntrusionDetected = {result}\n")
+# Scenario 1: Only MultipleFailedLogins -> Expected: FALSE
+print('=== Scenario 1: Low Risk ===')
+result = check(cyber_rules + [['MultipleFailedLogins']], 'IntrusionDetected')
+print(f'IntrusionDetected = {result}\n')
 
-```
+# Scenario 2: MultipleFailedLogins + LoginFromUnknownIP -> Expected: FALSE
+print('=== Scenario 2: Suspicious Activity ===')
+result = check(cyber_rules + [['MultipleFailedLogins'], ['LoginFromUnknownIP']], 'IntrusionDetected')
+print(f'IntrusionDetected = {result}\n')
 
-```python
-# Scenario 2: Suspicious but not confirmed
-print("=== Scenario 2: Suspicious Activity ===")
-facts2 = [frozenset(['MultipleFailedLogins']), frozenset(['LoginFromUnknownIP'])]
-result = resolution(cyber_clauses + facts2, 'IntrusionDetected')
-print(f"IntrusionDetected = {result}\n")
-
-```
-
-```python
-# Scenario 3: High Risk - all flags raised
-print("=== Scenario 3: High Risk Intrusion ===")
-facts3 = [
-    frozenset(['MultipleFailedLogins']),
-    frozenset(['LoginFromUnknownIP']),
-    frozenset(['AdminPrivileges'])
-]
-result = resolution(cyber_clauses + facts3, 'IntrusionDetected')
-print(f"IntrusionDetected = {result}\n")
-
+# Scenario 3: All flags raised -> Expected: TRUE
+print('=== Scenario 3: High Risk Intrusion ===')
+facts = [['MultipleFailedLogins'], ['LoginFromUnknownIP'], ['AdminPrivileges']]
+result = check(cyber_rules + facts, 'IntrusionDetected')
+print(f'IntrusionDetected = {result}\n')
 ```
 
 ## Q2: Wastewater Treatment Decision
 
 **Rules:**
-1. HighBOD ∧ LowDO → OrganicPollution
-2. HighTurbidity → Contamination
-3. ToxicChemicals → Contamination
-4. OrganicPollution ∧ Contamination → SeverePollution
-5. SeverePollution → TreatmentRequired
-6. pHImbalance → TreatmentRequired
-
+1. HighBOD AND LowDO -> OrganicPollution
+2. HighTurbidity -> Contamination
+3. ToxicChemicals -> Contamination
+4. OrganicPollution AND Contamination -> SeverePollution
+5. SeverePollution -> TreatmentRequired
+6. pHImbalance -> TreatmentRequired
 
 ```python
-water_clauses = [
-    implication_to_cnf(['HighBOD', 'LowDO'], 'OrganicPollution'),
-    implication_to_cnf(['HighTurbidity'], 'Contamination'),
-    implication_to_cnf(['ToxicChemicals'], 'Contamination'),
-    implication_to_cnf(['OrganicPollution', 'Contamination'], 'SeverePollution'),
-    implication_to_cnf(['SeverePollution'], 'TreatmentRequired'),
-    implication_to_cnf(['pHImbalance'], 'TreatmentRequired'),
+water_rules = [
+    rule_to_cnf(['HighBOD', 'LowDO'],                 'OrganicPollution'),
+    rule_to_cnf(['HighTurbidity'],                     'Contamination'),
+    rule_to_cnf(['ToxicChemicals'],                    'Contamination'),
+    rule_to_cnf(['OrganicPollution', 'Contamination'], 'SeverePollution'),
+    rule_to_cnf(['SeverePollution'],                   'TreatmentRequired'),
+    rule_to_cnf(['pHImbalance'],                       'TreatmentRequired'),
 ]
 
-# Scenario 1: Only HighBOD → FALSE
-print("=== Scenario 1: HighBOD only ===")
-result = resolution(water_clauses + [frozenset(['HighBOD'])], 'TreatmentRequired')
-print(f"TreatmentRequired = {result}\n")
+# Scenario 1: Only HighBOD -> Expected: FALSE
+print('=== Scenario 1: HighBOD only ===')
+result = check(water_rules + [['HighBOD']], 'TreatmentRequired')
+print(f'TreatmentRequired = {result}\n')
 
-# Scenario 2: HighBOD, LowDO, HighTurbidity → TRUE
-print("=== Scenario 2: HighBOD + LowDO + HighTurbidity ===")
-facts2 = [frozenset(['HighBOD']), frozenset(['LowDO']), frozenset(['HighTurbidity'])]
-result = resolution(water_clauses + facts2, 'TreatmentRequired')
-print(f"TreatmentRequired = {result}\n")
+# Scenario 2: HighBOD + LowDO + HighTurbidity -> Expected: TRUE
+print('=== Scenario 2: HighBOD + LowDO + HighTurbidity ===')
+result = check(water_rules + [['HighBOD'], ['LowDO'], ['HighTurbidity']], 'TreatmentRequired')
+print(f'TreatmentRequired = {result}\n')
 
-# Scenario 3: ToxicChemicals → TRUE
-print("=== Scenario 3: ToxicChemicals ===")
-result = resolution(water_clauses + [frozenset(['ToxicChemicals'])], 'TreatmentRequired')
-print(f"TreatmentRequired = {result}\n")
-
+# Scenario 3: ToxicChemicals -> Expected: TRUE
+print('=== Scenario 3: ToxicChemicals ===')
+result = check(water_rules + [['ToxicChemicals']], 'TreatmentRequired')
+print(f'TreatmentRequired = {result}\n')
 ```
